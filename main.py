@@ -1,105 +1,196 @@
 import json
 from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
+
+# --------------------------------------------------
+# 기본 설정
+# --------------------------------------------------
+
+st.set_page_config(
+    page_title="뇌졸중 예측 실습실",
+    page_icon="🏥",
+    layout="wide"
+)
+
+st.title("🏥 뇌졸중 예측 실습실")
+st.caption("데이터 과학 · 데이터 모델링과 평가")
+
 DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/stroke.csv"
-RECORD_DIR = Path(__file__).resolve().parent / "내_기록"
-RECORD_FILE = RECORD_DIR / "stroke_실습실_기록.json"
 
-st.set_page_config(page_title="뇌졸중 예측 실습실", page_icon="🧠", layout="wide")
-
-
-def load_notes():
-    if not RECORD_FILE.exists():
-        return {"meanings": {}, "source": ""}
-    try:
-        with RECORD_FILE.open("r", encoding="utf-8") as file:
-            saved = json.load(file)
-        return {"meanings": saved.get("meanings", {}), "source": saved.get("source", "")}
-    except (OSError, json.JSONDecodeError, AttributeError):
-        st.warning("기존 기록을 읽지 못해 새 기록으로 시작합니다.")
-        return {"meanings": {}, "source": ""}
+RECORD_DIR = Path("내_기록")
+RECORD_FILE = RECORD_DIR / "데이터_소개.json"
 
 
-def save_notes(meanings, source):
-    RECORD_DIR.mkdir(parents=True, exist_ok=True)
-    with RECORD_FILE.open("w", encoding="utf-8") as file:
-        json.dump({"meanings": meanings, "source": source}, file, ensure_ascii=False, indent=2)
-
+# --------------------------------------------------
+# 데이터 불러오기
+# --------------------------------------------------
 
 @st.cache_data
 def load_data():
     return pd.read_csv(DATA_URL, encoding="utf-8")
 
 
-st.title("🧠 뇌졸중 예측 실습실")
-st.write("뇌졸중 관련 공개 데이터를 살펴보고, 각 열의 의미와 데이터 구조를 직접 정리하는 교육용 실습실입니다.")
-
 try:
     df = load_data()
-except Exception as error:
-    st.error("데이터를 불러오지 못했습니다. 인터넷 연결과 데이터 주소를 확인해 주세요.")
-    st.caption(f"오류 정보: {error}")
+except Exception as e:
+    st.error(f"데이터를 불러오는 중 오류가 발생했습니다.\n\n{e}")
     st.stop()
 
-expected = ["id", "gender", "age", "hypertension", "heart_disease", "ever_married",
-            "work_type", "Residence_type", "avg_glucose_level", "bmi", "smoking_status", "stroke"]
-missing = [column for column in expected if column not in df.columns]
-if missing:
-    st.error("데이터에 필요한 열이 없습니다: " + ", ".join(missing))
-    st.stop()
 
-stroke_count = int(df["stroke"].eq(1).sum())
-stroke_rate = df["stroke"].eq(1).mean() * 100 if len(df) else 0.0
+# --------------------------------------------------
+# 기록 불러오기 및 저장하기
+# --------------------------------------------------
 
-st.subheader("데이터 한눈에 보기")
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("전체 사람 수", f"{len(df):,}명")
-c2.metric("열 개수", f"{len(df.columns):,}개")
-c3.metric("stroke가 1인 사람 수", f"{stroke_count:,}명")
-c4.metric("stroke가 1인 비율", f"{stroke_rate:.2f}%")
+def load_record():
+    if RECORD_FILE.exists():
+        try:
+            with open(RECORD_FILE, "r", encoding="utf-8") as file:
+                return json.load(file)
+        except Exception:
+            return {}
+
+    return {}
+
+
+def save_record(meanings, source):
+    RECORD_DIR.mkdir(parents=True, exist_ok=True)
+
+    record = {
+        "meanings": meanings,
+        "source": source
+    }
+
+    with open(RECORD_FILE, "w", encoding="utf-8") as file:
+        json.dump(record, file, ensure_ascii=False, indent=4)
+
+
+saved_record = load_record()
+
+saved_meanings = saved_record.get("meanings", {})
+saved_source = saved_record.get("source", "")
+
+
+# --------------------------------------------------
+# 숫자 카드
+# --------------------------------------------------
+
+total_people = len(df)
+total_columns = len(df.columns)
+stroke_count = int((df["stroke"] == 1).sum())
+stroke_rate = stroke_count / total_people * 100 if total_people else 0
+
+st.subheader("데이터 규모")
+
+col1, col2, col3, col4 = st.columns(4)
+
+col1.metric("전체 사람 수", f"{total_people:,}명")
+col2.metric("열 개수", f"{total_columns}개")
+col3.metric("뇌졸중 경험자", f"{stroke_count:,}명")
+col4.metric("뇌졸중 비율", f"{stroke_rate:.2f}%")
+
+
+# --------------------------------------------------
+# 열 설명 표
+# --------------------------------------------------
 
 st.divider()
-st.subheader("열 이름과 데이터 구조")
-st.write("우리말 뜻 칸을 교재를 참고해 직접 채워 보세요. 입력 내용은 자동 저장됩니다.")
-saved = load_notes()
-rows = [{
-    "열 이름": col,
-    "우리말 뜻": saved["meanings"].get(col, ""),
-    "값의 종류": str(df[col].dtype),
-    "빈 값 개수": int(df[col].isna().sum()),
-} for col in df.columns]
+st.subheader("데이터 열 살펴보기")
 
-edited = st.data_editor(
-    pd.DataFrame(rows), key="meaning_editor", use_container_width=True,
-    hide_index=True, num_rows="fixed",
+column_info = []
+
+for column in df.columns:
+    column_info.append({
+        "열 이름": column,
+        "우리말 뜻": saved_meanings.get(column, ""),
+        "값의 종류": int(df[column].nunique(dropna=True)),
+        "빈 값 개수": int(df[column].isna().sum())
+    })
+
+info_df = pd.DataFrame(column_info)
+
+edited_df = st.data_editor(
+    info_df,
+    use_container_width=True,
+    hide_index=True,
     disabled=["열 이름", "값의 종류", "빈 값 개수"],
     column_config={
-        "열 이름": st.column_config.TextColumn("열 이름"),
-        "우리말 뜻": st.column_config.TextColumn("우리말 뜻", help="교재를 참고해 직접 입력하세요."),
-        "값의 종류": st.column_config.TextColumn("값의 종류"),
-        "빈 값 개수": st.column_config.NumberColumn("빈 값 개수", format="%d"),
-    },
+        "우리말 뜻": st.column_config.TextColumn(
+            "우리말 뜻",
+            help="교재를 참고하여 각 열의 우리말 뜻을 입력하세요."
+        )
+    }
 )
-meanings = {
-    str(row["열 이름"]): str(row["우리말 뜻"]) if pd.notna(row["우리말 뜻"]) else ""
-    for _, row in edited.iterrows()
-}
 
-st.subheader("데이터 미리 보기")
-st.write("원본 데이터의 처음 다섯 줄입니다.")
-st.dataframe(df.head(5), use_container_width=True, hide_index=True)
+if st.button("우리말 뜻 저장", type="primary"):
+    meanings = dict(
+        zip(edited_df["열 이름"], edited_df["우리말 뜻"])
+    )
+
+    save_record(meanings, saved_source)
+    st.success("우리말 뜻이 저장되었습니다.")
+
+
+# --------------------------------------------------
+# 데이터 미리보기
+# --------------------------------------------------
+
+st.divider()
+st.subheader("데이터 미리보기")
+
+st.dataframe(
+    df.head(5),
+    use_container_width=True,
+    hide_index=True
+)
+
+
+# --------------------------------------------------
+# 데이터 출처
+# --------------------------------------------------
 
 st.divider()
 st.subheader("데이터 출처")
-source = st.text_input("교재에 나온 데이터 출처를 입력하세요.",
-                       value=saved.get("source", ""), key="source_input",
-                       placeholder="교재에 적힌 출처를 입력하세요.")
-try:
-    save_notes(meanings, source)
-    st.caption(f"입력 내용 저장 위치: {RECORD_FILE.as_posix()}")
-except OSError as error:
-    st.error(f"기록 저장에 실패했습니다: {error}")
 
-st.caption("주의: 이 앱은 데이터 분석과 머신러닝 학습을 위한 교육용 도구입니다. 실제 개인의 뇌졸중 진단이나 의료적 판단에 사용할 수 없습니다.")
+st.markdown(
+    """
+    데이터 게시자, 라이선스, 원자료 출처 등을 확인하고 기록하세요.
+
+    확인할 수 없는 정보는 임의로 작성하지 말고
+    **확인할 수 없음**으로 남겨 두세요.
+    """
+)
+
+source_text = st.text_area(
+    "출처 기록",
+    value=saved_source,
+    height=150,
+    placeholder="게시자, 라이선스, 사사 문구 등을 입력하세요."
+)
+
+if st.button("출처 저장"):
+    meanings = dict(
+        zip(edited_df["열 이름"], edited_df["우리말 뜻"])
+    )
+
+    save_record(meanings, source_text)
+    st.success("출처가 저장되었습니다.")
+
+
+# --------------------------------------------------
+# 안내
+# --------------------------------------------------
+
+st.divider()
+
+st.info(
+    """
+    이 데이터는 분류 모델을 학습하고 평가하는 교육용 자료입니다.
+
+    원자료의 수집 출처를 확인할 수 없으므로 분석 결과를
+    실제 환자나 일반 인구에 적용할 수 없습니다.
+    실제 의학적 판단이나 진단에 사용해서는 안 됩니다.
+    """
+)
