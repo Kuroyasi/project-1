@@ -1,78 +1,79 @@
-import streamlit as st
 import pandas as pd
 import plotly.express as px
+import streamlit as st
 
-# 페이지 설정
+
+# --------------------------------------------------
+# 기본 설정
+# --------------------------------------------------
+
 st.set_page_config(
     page_title="데이터 탐색",
     page_icon="📊",
     layout="wide"
 )
 
+st.title("📊 데이터 탐색")
+st.caption("데이터의 분포와 뇌졸중 여부에 따른 차이를 살펴봅니다.")
+
 DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/stroke.csv"
 
 
+# --------------------------------------------------
 # 데이터 불러오기
+# --------------------------------------------------
+
 @st.cache_data
 def load_data():
     return pd.read_csv(DATA_URL, encoding="utf-8")
 
 
-st.title("📊 데이터 탐색")
-st.write("뇌졸중 데이터의 분포와 변수 사이의 관계를 그래프로 살펴봅니다.")
-
 try:
     df = load_data()
-except Exception as error:
-    st.error("데이터를 불러오지 못했습니다. 인터넷 연결과 데이터 주소를 확인해 주세요.")
-    st.exception(error)
+except Exception as e:
+    st.error(f"데이터를 불러오지 못했습니다.\n\n{e}")
     st.stop()
 
 
-# 필요한 열 확인
 required_columns = [
     "age",
     "avg_glucose_level",
-    "stroke",
     "hypertension",
     "heart_disease",
     "bmi",
-    "smoking_status"
+    "smoking_status",
+    "stroke"
 ]
 
-missing_columns = [col for col in required_columns if col not in df.columns]
+missing_columns = [
+    column for column in required_columns
+    if column not in df.columns
+]
 
 if missing_columns:
-    st.error(f"필요한 열이 없습니다: {', '.join(missing_columns)}")
+    st.error(f"데이터에 필요한 열이 없습니다: {missing_columns}")
     st.stop()
 
 
-# 숫자형 데이터 변환
-numeric_columns = [
-    "age",
-    "avg_glucose_level",
-    "stroke",
-    "hypertension",
-    "heart_disease",
-    "bmi"
-]
+# --------------------------------------------------
+# 데이터 전처리
+# --------------------------------------------------
 
-for column in numeric_columns:
-    df[column] = pd.to_numeric(df[column], errors="coerce")
+df["age"] = pd.to_numeric(df["age"], errors="coerce")
+df["avg_glucose_level"] = pd.to_numeric(
+    df["avg_glucose_level"], errors="coerce"
+)
+df["stroke"] = pd.to_numeric(df["stroke"], errors="coerce")
 
-
-# 뇌졸중 값이 0 또는 1인 데이터만 사용
-valid_df = df[df["stroke"].isin([0, 1])].copy()
-
-valid_df["뇌졸중 여부"] = valid_df["stroke"].map({
+df["뇌졸중 여부"] = df["stroke"].map({
     0: "뇌졸중 없음",
     1: "뇌졸중 있음"
 })
 
 
-# ==================================================
-# 1. 나이와 평균 혈당의 분포
-# ==================================================
+# --------------------------------------------------
+# 1. 나이와 평균 혈당 분포
+# --------------------------------------------------
 
 st.header("1. 나이와 평균 혈당의 분포")
 
@@ -80,21 +81,19 @@ col1, col2 = st.columns(2)
 
 with col1:
     fig_age = px.histogram(
-        df.dropna(subset=["age"]),
+        df,
         x="age",
         nbins=30,
         title="나이 분포",
         labels={
             "age": "나이",
-            "count": "인원수"
-        },
-        template="plotly_white"
+            "count": "사람 수"
+        }
     )
 
     fig_age.update_layout(
-        height=400,
         xaxis_title="나이",
-        yaxis_title="인원수"
+        yaxis_title="사람 수"
     )
 
     st.plotly_chart(fig_age, use_container_width=True)
@@ -102,107 +101,76 @@ with col1:
 
 with col2:
     fig_glucose = px.histogram(
-        df.dropna(subset=["avg_glucose_level"]),
+        df,
         x="avg_glucose_level",
         nbins=30,
         title="평균 혈당 분포",
         labels={
             "avg_glucose_level": "평균 혈당",
-            "count": "인원수"
-        },
-        template="plotly_white"
+            "count": "사람 수"
+        }
     )
 
     fig_glucose.update_layout(
-        height=400,
         xaxis_title="평균 혈당",
-        yaxis_title="인원수"
+        yaxis_title="사람 수"
     )
 
     st.plotly_chart(fig_glucose, use_container_width=True)
 
 
+# --------------------------------------------------
+# 2. 뇌졸중 여부에 따른 상자그림
+# --------------------------------------------------
+
 st.divider()
-
-
-# ==================================================
-# 2. 뇌졸중 여부에 따른 나이와 혈당 비교
-# ==================================================
-
 st.header("2. 뇌졸중 여부에 따른 비교")
+
+stroke_data = df.dropna(
+    subset=["stroke", "age", "avg_glucose_level"]
+).copy()
 
 col1, col2 = st.columns(2)
 
 with col1:
-    age_box_data = valid_df.dropna(subset=["age"])
-
     fig_age_box = px.box(
-        age_box_data,
+        stroke_data,
         x="뇌졸중 여부",
         y="age",
         color="뇌졸중 여부",
-        category_orders={
-            "뇌졸중 여부": ["뇌졸중 없음", "뇌졸중 있음"]
-        },
-        title="뇌졸중 여부에 따른 나이",
+        title="뇌졸중 여부에 따른 나이 비교",
         labels={
             "age": "나이",
             "뇌졸중 여부": "그룹"
-        },
-        template="plotly_white"
-    )
-
-    fig_age_box.update_layout(
-        height=400,
-        showlegend=False,
-        xaxis_title="뇌졸중 여부",
-        yaxis_title="나이"
+        }
     )
 
     st.plotly_chart(fig_age_box, use_container_width=True)
 
 
 with col2:
-    glucose_box_data = valid_df.dropna(
-        subset=["avg_glucose_level"]
-    )
-
     fig_glucose_box = px.box(
-        glucose_box_data,
+        stroke_data,
         x="뇌졸중 여부",
         y="avg_glucose_level",
         color="뇌졸중 여부",
-        category_orders={
-            "뇌졸중 여부": ["뇌졸중 없음", "뇌졸중 있음"]
-        },
-        title="뇌졸중 여부에 따른 평균 혈당",
+        title="뇌졸중 여부에 따른 평균 혈당 비교",
         labels={
             "avg_glucose_level": "평균 혈당",
             "뇌졸중 여부": "그룹"
-        },
-        template="plotly_white"
-    )
-
-    fig_glucose_box.update_layout(
-        height=400,
-        showlegend=False,
-        xaxis_title="뇌졸중 여부",
-        yaxis_title="평균 혈당"
+        }
     )
 
     st.plotly_chart(fig_glucose_box, use_container_width=True)
 
 
-# 그룹별 평균값
-st.subheader("그룹별 평균값")
+# 평균값 표
+st.subheader("두 그룹의 평균값")
 
 mean_table = (
-    valid_df
-    .groupby("뇌졸중 여부")[
-        ["age", "avg_glucose_level"]
-    ]
+    stroke_data
+    .groupby("뇌졸중 여부")[["age", "avg_glucose_level"]]
     .mean()
-    .reindex(["뇌졸중 없음", "뇌졸중 있음"])
     .rename(columns={
         "age": "평균 나이",
         "avg_glucose_level": "평균 혈당"
@@ -210,81 +178,77 @@ mean_table = (
     .round(2)
 )
 
-st.dataframe(mean_table, use_container_width=True)
+st.dataframe(
+    mean_table,
+    use_container_width=True
+)
+
+
+# --------------------------------------------------
+# 3. 고혈압 여부에 따른 뇌졸중 비율
+# --------------------------------------------------
 
 st.divider()
+st.header("3. 고혈압과 심장병에 따른 뇌졸중 비율")
 
 
-# ==================================================
-# 3. 고혈압 및 심장병 유무에 따른 뇌졸중 비율
-# ==================================================
-
-st.header("3. 질환 유무에 따른 뇌졸중 비율")
-
-
-def make_stroke_rate_chart(data, column, title, labels):
-
-    chart_data = data[
-        data[column].isin([0, 1])
-    ].copy()
-
-    chart_data["상태"] = chart_data[column].map(labels)
-
-    rate_data = (
-        chart_data
-        .groupby("상태")["stroke"]
-        .mean()
+def make_stroke_rate_chart(data, column, title):
+    grouped = (
+        data.groupby(column, dropna=False)["stroke"]
+        .agg(["mean", "count"])
         .reset_index()
     )
 
-    rate_data["뇌졸중 비율(%)"] = rate_data["stroke"] * 100
+    grouped["뇌졸중 비율"] = grouped["mean"] * 100
 
-    rate_data["상태"] = pd.Categorical(
-        rate_data["상태"],
-        categories=[labels[0], labels[1]],
-        ordered=True
-    )
+    if column == "hypertension":
+        grouped["구분"] = grouped[column].map({
+            0: "고혈압 없음",
+            1: "고혈압 있음"
+        })
+    elif column == "heart_disease":
+        grouped["구분"] = grouped[column].map({
+            0: "심장병 없음",
+            1: "심장병 있음"
+        })
 
-    rate_data = rate_data.sort_values("상태")
+    grouped["구분"] = grouped["구분"].fillna("결측")
 
     fig = px.bar(
-        rate_data,
-        x="상태",
-        y="뇌졸중 비율(%)",
-        text=rate_data["뇌졸중 비율(%)"].map(
-            lambda x: f"{x:.2f}%"
+        grouped,
+        x="구분",
+        y="뇌졸중 비율",
+        text=grouped["뇌졸중 비율"].map(
+            lambda value: f"{value:.2f}%"
         ),
         title=title,
-        template="plotly_white"
+        labels={
+            "구분": "구분",
+            "뇌졸중 비율": "뇌졸중 비율(%)"
+        }
     )
 
     fig.update_traces(
         textposition="outside"
     )
 
-    max_rate = rate_data["뇌졸중 비율(%)"].max()
-
     fig.update_layout(
-        height=400,
-        xaxis_title="구분",
-        yaxis_title="뇌졸중 비율(%)",
-        yaxis_range=[0, max(5, max_rate * 1.2)]
+        yaxis_range=[
+            0,
+            max(5, grouped["뇌졸중 비율"].max() * 1.25)
+        ]
     )
 
-    return fig
+    return fig, grouped
 
 
 col1, col2 = st.columns(2)
 
 with col1:
-    hypertension_fig = make_stroke_rate_chart(
-        valid_df,
+    hypertension_fig, hypertension_table = make_stroke_rate_chart(
+        df,
         "hypertension",
-        "고혈압 유무에 따른 뇌졸중 비율",
-        {
-            0: "고혈압 없음",
-            1: "고혈압 있음"
-        }
+        "고혈압 여부에 따른 뇌졸중 비율"
     )
 
     st.plotly_chart(
@@ -292,52 +256,35 @@ with col1:
         use_container_width=True
     )
 
-
 with col2:
-    heart_disease_fig = make_stroke_rate_chart(
-        valid_df,
+    heart_fig, heart_table = make_stroke_rate_chart(
+        df,
         "heart_disease",
-        "심장병 유무에 따른 뇌졸중 비율",
-        {
-            0: "심장병 없음",
-            1: "심장병 있음"
-        }
+        "심장병 여부에 따른 뇌졸중 비율"
     )
 
     st.plotly_chart(
-        heart_disease_fig,
+        heart_fig,
         use_container_width=True
     )
 
 
-st.caption(
-    "뇌졸중 비율은 각 그룹에서 stroke 값이 1인 사람의 비율입니다. "
-    "이 그래프만으로 질환이 뇌졸중의 직접적인 원인이라고 판단할 수는 없습니다."
-)
+# --------------------------------------------------
+# 4. BMI 결측값 분석
+# --------------------------------------------------
 
 st.divider()
+st.header("4. 체질량지수(BMI) 결측값 분석")
 
+missing_bmi = df[df["bmi"].isna()]
+total_stroke_rate = df["stroke"].mean() * 100
 
-# ==================================================
-# 4. BMI 결측자와 전체 뇌졸중 비율 비교
-# ==================================================
-
-st.header("4. BMI 결측 여부와 뇌졸중 비율")
-
-missing_bmi_df = valid_df[
-    valid_df["bmi"].isna()
-]
-
-overall_stroke_rate = (
-    valid_df["stroke"].mean() * 100
-)
-
-if len(missing_bmi_df) > 0:
-    missing_bmi_rate = (
-        missing_bmi_df["stroke"].mean() * 100
+if len(missing_bmi) > 0:
+    missing_bmi_stroke_rate = (
+        missing_bmi["stroke"].mean() * 100
     )
 else:
-    missing_bmi_rate = None
+    missing_bmi_stroke_rate = 0
 
 
 bmi_comparison = pd.DataFrame({
@@ -345,13 +292,17 @@ bmi_comparison = pd.DataFrame({
         "BMI가 비어 있는 사람",
         "전체 사람"
     ],
-    "인원수": [
-        len(missing_bmi_df),
-        len(valid_df)
+    "사람 수": [
+        len(missing_bmi),
+        len(df)
+    ],
+    "뇌졸중 경험자 수": [
+        int(missing_bmi["stroke"].sum()),
+        int(df["stroke"].sum())
     ],
     "뇌졸중 비율(%)": [
-        missing_bmi_rate,
-        overall_stroke_rate
+        missing_bmi_stroke_rate,
+        total_stroke_rate
     ]
 })
 
@@ -361,52 +312,54 @@ bmi_comparison["뇌졸중 비율(%)"] = (
 
 st.dataframe(
     bmi_comparison,
-    hide_index=True,
-    use_container_width=True
+    use_container_width=True,
+    hide_index=True
 )
 
-st.divider()
+if total_stroke_rate > 0:
+    ratio = missing_bmi_stroke_rate / total_stroke_rate
+
+    st.metric(
+        "BMI 결측 그룹의 뇌졸중 비율 / 전체 비율",
+        f"{ratio:.2f}배"
+    )
 
 
-# ==================================================
+# --------------------------------------------------
 # 5. 흡연 상태별 인원수
-# ==================================================
+# --------------------------------------------------
 
+st.divider()
 st.header("5. 흡연 상태별 인원수")
 
-smoking_counts = (
+smoking_count = (
     df["smoking_status"]
-    .fillna("결측")
+    .fillna("빈 값")
     .value_counts()
     .rename_axis("흡연 상태")
-    .reset_index(name="인원수")
+    .reset_index(name="사람 수")
 )
 
 st.dataframe(
-    smoking_counts,
-    hide_index=True,
-    use_container_width=True
+    smoking_count,
+    use_container_width=True,
+    hide_index=True
 )
 
-
-# 흡연 상태별 인원수 그래프
 fig_smoking = px.bar(
-    smoking_counts,
+    smoking_count,
     x="흡연 상태",
-    y="인원수",
-    text="인원수",
+    y="사람 수",
+    text="사람 수",
     title="흡연 상태별 인원수",
-    template="plotly_white"
+    labels={
+        "흡연 상태": "흡연 상태",
+        "사람 수": "사람 수"
+    }
 )
 
 fig_smoking.update_traces(
     textposition="outside"
-)
-
-fig_smoking.update_layout(
-    height=400,
-    xaxis_title="흡연 상태",
-    yaxis_title="인원수"
 )
 
 st.plotly_chart(
@@ -415,9 +368,18 @@ st.plotly_chart(
 )
 
 
+# --------------------------------------------------
+# 마무리
+# --------------------------------------------------
+
 st.divider()
 
-st.caption(
-    "이 페이지는 머신러닝 학습을 위한 데이터 탐색용입니다. "
-    "실제 개인의 뇌졸중 진단이나 위험 판단에 사용할 수 없습니다."
+st.info(
+    """
+    두 그룹의 평균이나 비율이 다르다는 사실만으로
+    개인의 뇌졸중 여부를 정확하게 예측할 수 있는 것은 아닙니다.
+
+    실제 예측에 얼마나 도움이 되는지는 분류 모델을 학습하고
+    테스트 데이터로 평가해야 알 수 있습니다.
+    """
 )
