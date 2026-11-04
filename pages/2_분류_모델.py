@@ -1,545 +1,534 @@
 
-import streamlit as st
+from pathlib import Path
+
 import pandas as pd
-import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
 
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.tree import DecisionTreeClassifier, _tree
 
-# ==========================================
-# 1. 페이지 설정
-# ==========================================
 
 st.set_page_config(
-    page_title="뇌졸중 예측 실습실 | 데이터 탐색",
-    page_icon="🔎",
+    page_title="분류 모델",
+    page_icon="🤖",
     layout="wide"
 )
 
-DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/stroke.csv"
+DATA_PATH = Path(__file__).resolve().parent.parent / "stroke.csv"
 
-
-# ==========================================
-# 2. 데이터 불러오기
-# ==========================================
 
 @st.cache_data
 def load_data():
-    df = pd.read_csv(
-        DATA_URL,
-        encoding="utf-8"
-    )
-    return df
+    if not DATA_PATH.exists():
+        raise FileNotFoundError(
+            f"stroke.csv 파일을 찾을 수 없습니다: {DATA_PATH}"
+        )
+
+    return pd.read_csv(DATA_PATH, encoding="utf-8")
 
 
 try:
     df = load_data()
-
 except Exception as e:
-    st.error("데이터를 불러오지 못했습니다.")
-    st.error(f"오류 내용: {e}")
+    st.error(f"데이터를 불러오지 못했습니다: {e}")
     st.stop()
 
 
-# 필요한 열 확인
-required_columns = [
-    "age",
-    "avg_glucose_level",
-    "hypertension",
-    "heart_disease",
-    "bmi",
-    "smoking_status",
-    "stroke"
-]
+st.title("🤖 분류 모델")
+st.write("머신러닝 모델을 학습하고 예측 결과를 시각화합니다.")
 
-missing_columns = [
-    col for col in required_columns
-    if col not in df.columns
-]
+st.divider()
 
-if missing_columns:
-    st.error(f"필요한 열이 없습니다: {missing_columns}")
+
+# 사용할 변수 선택
+st.subheader("1. 학습 변수 선택")
+
+feature_labels = {
+    "age": "나이",
+    "avg_glucose_level": "평균 혈당",
+    "bmi": "체질량지수",
+    "hypertension": "고혈압",
+    "heart_disease": "심장병"
+}
+
+features = st.multiselect(
+    "모델 학습에 사용할 변수를 선택하세요.",
+    options=list(feature_labels.keys()),
+    default=[
+        "age",
+        "avg_glucose_level",
+        "hypertension",
+        "heart_disease"
+    ],
+    format_func=lambda x: feature_labels[x]
+)
+
+if len(features) < 2:
+    st.warning("시각화를 위해 최소 2개의 변수를 선택해야 합니다.")
     st.stop()
 
 
-# ==========================================
-# 3. 페이지 제목
-# ==========================================
+# 데이터 분리
+df = df.sort_values("id").reset_index(drop=True)
 
-st.title("🔎 데이터 탐색")
+positions = list(range(len(df)))
+test_mask = [position % 10 < 3 for position in positions]
 
-st.markdown(
-    """
-    뇌졸중 데이터의 주요 변수들을 다양한 그래프로 분석합니다.
+train_df = df.loc[
+    [not value for value in test_mask]
+].copy()
 
-    히스토그램과 상자그림을 통해 데이터의 분포를 확인하고,
-    고혈압과 심장병 등의 요인이 뇌졸중 발생과 어떤 관계가 있는지 탐색합니다.
-    """
+test_df = df.loc[test_mask].copy()
+
+X_train = train_df[features].copy()
+X_test = test_df[features].copy()
+
+y_train = train_df["stroke"].astype(int)
+y_test = test_df["stroke"].astype(int)
+
+
+# BMI 결측치 처리
+if "bmi" in features:
+    bmi_median = X_train["bmi"].median()
+
+    X_train["bmi"] = X_train["bmi"].fillna(bmi_median)
+    X_test["bmi"] = X_test["bmi"].fillna(bmi_median)
+
+
+# 로지스틱 회귀용 표준화
+scaler = StandardScaler()
+
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+
+# 모델 학습
+@st.cache_resource
+def train_models(feature_names, train_x, train_y, train_x_scaled):
+    logistic = LogisticRegression(
+        max_iter=2000,
+        random_state=42
+    )
+
+    tree = DecisionTreeClassifier(
+        max_depth=3,
+        min_samples_leaf=5,
+        random_state=42
+    )
+
+    logistic.fit(train_x_scaled, train_y)
+    tree.fit(train_x, train_y)
+
+    return logistic, tree
+
+
+logistic_model, tree_model = train_models(
+    tuple(features),
+    X_train,
+    y_train,
+    X_train_scaled
 )
 
+
+# 예측
+logistic_pred = logistic_model.predict(X_test_scaled)
+tree_pred = tree_model.predict(X_test)
+
+baseline_class = int(y_train.mode().iloc[0])
+
+baseline_pred = [
+    baseline_class for _ in range(len(y_test))
+]
+
+
+# 정확도
+logistic_accuracy = (
+    sum(logistic_pred == y_test) / len(y_test)
+)
+
+tree_accuracy = (
+    sum(tree_pred == y_test) / len(y_test)
+)
+
+baseline_accuracy = (
+    sum(
+        prediction == actual
+        for prediction, actual in zip(baseline_pred, y_test)
+    ) / len(y_test)
+)
+
+
+# 모델 결과
 st.divider()
+st.subheader("2. 모델 성능 비교")
 
+col1, col2, col3 = st.columns(3)
 
-# ==========================================
-# 4. 나이와 평균 혈당 분포
-# ==========================================
-
-st.subheader("1. 주요 변수의 분포")
-
-st.markdown(
-    """
-    전체 데이터에서 나이와 평균 혈당이 어떤 형태로 분포하는지
-    히스토그램으로 확인합니다.
-    """
+col1.metric(
+    "로지스틱 회귀 정확도",
+    f"{logistic_accuracy * 100:.2f}%"
 )
 
-col1, col2 = st.columns(2)
+col2.metric(
+    "결정 트리 정확도",
+    f"{tree_accuracy * 100:.2f}%"
+)
 
-with col1:
+col3.metric(
+    "기준 모델 정확도",
+    f"{baseline_accuracy * 100:.2f}%"
+)
 
-    fig_age = px.histogram(
-        df,
-        x="age",
-        nbins=30,
-        title="나이 분포",
-        labels={
-            "age": "나이",
-            "count": "사람 수"
-        },
-        color_discrete_sequence=["#4C78A8"]
-    )
-
-    fig_age.update_layout(
-        xaxis_title="나이",
-        yaxis_title="사람 수",
-        bargap=0.05
-    )
-
-    st.plotly_chart(
-        fig_age,
-        use_container_width=True
-    )
+st.write(
+    f"학습 데이터: {len(train_df):,}명 / "
+    f"테스트 데이터: {len(test_df):,}명"
+)
 
 
-with col2:
-
-    fig_glucose = px.histogram(
-        df,
-        x="avg_glucose_level",
-        nbins=30,
-        title="평균 혈당 분포",
-        labels={
-            "avg_glucose_level": "평균 혈당",
-            "count": "사람 수"
-        },
-        color_discrete_sequence=["#F58518"]
-    )
-
-    fig_glucose.update_layout(
-        xaxis_title="평균 혈당",
-        yaxis_title="사람 수",
-        bargap=0.05
-    )
-
-    st.plotly_chart(
-        fig_glucose,
-        use_container_width=True
-    )
-
-
+# 2차원 예측 영역
 st.divider()
+st.subheader("3. 모델 예측 영역 시각화")
 
+x_feature = st.selectbox(
+    "X축 변수",
+    options=features,
+    index=0,
+    format_func=lambda x: feature_labels[x]
+)
 
-# ==========================================
-# 5. 뇌졸중 여부에 따른 상자그림
-# ==========================================
+y_candidates = [
+    feature for feature in features
+    if feature != x_feature
+]
 
-st.subheader("2. 뇌졸중 여부에 따른 변수 비교")
-
-st.markdown(
-    """
-    뇌졸중을 겪은 사람과 겪지 않은 사람을 구분하여
-    나이와 평균 혈당의 분포를 비교합니다.
-
-    상자그림을 통해 중앙값, 사분위수 및 이상치를 확인할 수 있습니다.
-    """
+y_feature = st.selectbox(
+    "Y축 변수",
+    options=y_candidates,
+    index=0,
+    format_func=lambda x: feature_labels[x]
 )
 
 
-# 그래프용 데이터 생성
-box_df = df.copy()
+# 나머지 변수는 테스트 데이터 중앙값으로 고정
+x_min = float(X_test[x_feature].min())
+x_max = float(X_test[x_feature].max())
+y_min = float(X_test[y_feature].min())
+y_max = float(X_test[y_feature].max())
 
-box_df["뇌졸중 여부"] = box_df["stroke"].map({
-    0: "뇌졸중 없음",
-    1: "뇌졸중 있음"
-})
+x_padding = (x_max - x_min) * 0.05
+y_padding = (y_max - y_min) * 0.05
 
-box_df = box_df.dropna(
-    subset=["뇌졸중 여부"]
-)
+if x_padding == 0:
+    x_padding = 1
 
-box_df["뇌졸중 여부"] = pd.Categorical(
-    box_df["뇌졸중 여부"],
-    categories=["뇌졸중 없음", "뇌졸중 있음"],
-    ordered=True
-)
+if y_padding == 0:
+    y_padding = 1
+
+x_min -= x_padding
+x_max += x_padding
+y_min -= y_padding
+y_max += y_padding
+
+grid_size = 45
+
+x_values = [
+    x_min + (x_max - x_min) * i / (grid_size - 1)
+    for i in range(grid_size)
+]
+
+y_values = [
+    y_min + (y_max - y_min) * i / (grid_size - 1)
+    for i in range(grid_size)
+]
+
+grid_rows = []
+
+for y_value in y_values:
+    for x_value in x_values:
+        row = {}
+
+        for feature in features:
+            row[feature] = float(X_train[feature].median())
+
+        row[x_feature] = x_value
+        row[y_feature] = y_value
+
+        grid_rows.append(row)
+
+grid_df = pd.DataFrame(grid_rows)[features]
 
 
-col1, col2 = st.columns(2)
+# 두 모델 예측 영역 계산
+grid_tree_pred = tree_model.predict(grid_df)
 
-with col1:
+grid_scaled = scaler.transform(grid_df)
+grid_logistic_prob = logistic_model.predict_proba(grid_scaled)
 
-    fig_age_box = px.box(
-        box_df,
-        x="뇌졸중 여부",
-        y="age",
-        color="뇌졸중 여부",
-        title="뇌졸중 여부에 따른 나이 비교",
-        labels={
-            "age": "나이",
-            "뇌졸중 여부": "구분"
+positive_index = list(logistic_model.classes_).index(1)
+
+grid_logistic_prob = grid_logistic_prob[
+    :, positive_index
+]
+
+tree_z = [
+    grid_tree_pred[i * grid_size:(i + 1) * grid_size]
+    for i in range(grid_size)
+]
+
+logistic_z = [
+    grid_logistic_prob[i * grid_size:(i + 1) * grid_size]
+    for i in range(grid_size)
+]
+
+
+# 그래프 생성
+fig = go.Figure()
+
+fig.add_trace(
+    go.Contour(
+        x=x_values,
+        y=y_values,
+        z=tree_z,
+        name="결정 트리 예측 영역",
+        colorscale=[
+            [0, "#DCEBFA"],
+            [1, "#F8DCDC"]
+        ],
+        opacity=0.45,
+        showscale=False,
+        contours={
+            "start": 0,
+            "end": 1,
+            "size": 1,
+            "coloring": "heatmap"
         },
-        color_discrete_sequence=[
-            "#4C78A8",
-            "#E45756"
-        ]
+        hoverinfo="skip"
     )
+)
 
-    fig_age_box.update_layout(
-        showlegend=False
-    )
-
-    st.plotly_chart(
-        fig_age_box,
-        use_container_width=True
-    )
-
-
-with col2:
-
-    fig_glucose_box = px.box(
-        box_df,
-        x="뇌졸중 여부",
-        y="avg_glucose_level",
-        color="뇌졸중 여부",
-        title="뇌졸중 여부에 따른 평균 혈당 비교",
-        labels={
-            "avg_glucose_level": "평균 혈당",
-            "뇌졸중 여부": "구분"
+fig.add_trace(
+    go.Contour(
+        x=x_values,
+        y=y_values,
+        z=logistic_z,
+        name="로지스틱 회귀 경계",
+        showscale=False,
+        contours={
+            "start": 0.5,
+            "end": 0.5,
+            "size": 1,
+            "coloring": "none",
+            "showlines": True
         },
-        color_discrete_sequence=[
-            "#4C78A8",
-            "#E45756"
-        ]
+        line={
+            "color": "black",
+            "width": 2
+        },
+        hoverinfo="skip"
     )
-
-    fig_glucose_box.update_layout(
-        showlegend=False
-    )
-
-    st.plotly_chart(
-        fig_glucose_box,
-        use_container_width=True
-    )
-
-
-# 그룹별 평균 계산
-mean_df = (
-    box_df
-    .groupby("뇌졸중 여부", observed=False)[
-        ["age", "avg_glucose_level"]
-    ]
-    .mean()
-    .reset_index()
 )
 
-mean_df = mean_df.rename(columns={
-    "뇌졸중 여부": "뇌졸중 구분",
-    "age": "평균 나이",
-    "avg_glucose_level": "평균 혈당"
-})
+for label, color, name in [
+    (0, "#2878B5", "실제 정상"),
+    (1, "#D9534F", "실제 뇌졸중")
+]:
+    selected = X_test[y_test == label]
 
-mean_df["평균 나이"] = mean_df["평균 나이"].round(2)
-mean_df["평균 혈당"] = mean_df["평균 혈당"].round(2)
+    fig.add_trace(
+        go.Scatter(
+            x=selected[x_feature],
+            y=selected[y_feature],
+            mode="markers",
+            name=name,
+            marker={
+                "color": color,
+                "size": 7,
+                "opacity": 0.75
+            }
+        )
+    )
 
 
-st.markdown("**그룹별 평균값 비교**")
+fig.update_layout(
+    title="결정 트리 예측 영역과 로지스틱 회귀 결정 경계",
+    xaxis_title=feature_labels[x_feature],
+    yaxis_title=feature_labels[y_feature],
+    height=600
+)
 
-st.dataframe(
-    mean_df,
-    use_container_width=True,
-    hide_index=True
+st.plotly_chart(fig, use_container_width=True)
+
+st.caption(
+    "다른 선택 변수들은 학습 데이터의 중앙값으로 고정했습니다. "
+    "색으로 표시된 결정 트리 영역은 해당 조건에서의 예측 클래스이며, "
+    "검은 선은 로지스틱 회귀의 예측 확률 0.5 경계입니다."
 )
 
 
+# 결정 트리 구조
 st.divider()
+st.subheader("4. 결정 트리 구조")
+
+tree_structure = tree_model.tree_
+tree_classes = list(tree_model.classes_)
+positive_index = tree_classes.index(1)
+
+feature_names = [
+    feature_labels[feature]
+    for feature in features
+]
+
+leaf_count = 0
+negative_leaf_count = 0
 
 
-# ==========================================
-# 6. 고혈압과 심장병에 따른 뇌졸중 비율
-# ==========================================
+def build_tree_graph(node_id=0):
+    global leaf_count, negative_leaf_count
 
-st.subheader("3. 질환 유무에 따른 뇌졸중 비율")
+    node = tree_structure
+    samples = node.n_node_samples[node_id]
+    values = node.value[node_id][0]
 
-st.markdown(
-    """
-    고혈압과 심장병의 유무에 따라 뇌졸중 발생 비율이
-    어떻게 달라지는지 비교합니다.
+    negative_count = int(values[tree_classes.index(0)])
+    positive_count = int(values[positive_index])
 
-    각 그룹의 전체 인원 중 뇌졸중을 겪은 사람의 비율을 계산합니다.
-    """
-)
+    positive_rate = (
+        positive_count / samples * 100
+        if samples > 0 else 0
+    )
 
+    is_leaf = (
+        node.children_left[node_id] == _tree.TREE_LEAF
+    )
 
-# 비율 계산 함수
-def calculate_stroke_rate(data, column):
+    if is_leaf:
+        leaf_count += 1
+
+        prediction = (
+            "뇌졸중" if positive_count > negative_count
+            else "정상"
+        )
+
+        if prediction == "정상":
+            negative_leaf_count += 1
+
+        color = (
+            "#F8DCDC" if prediction == "뇌졸중"
+            else "#DCEBFA"
+        )
+
+        return (
+            f'{node_id} [label="예측: {prediction}\\n'
+            f'데이터: {samples}명\\n'
+            f'정상: {negative_count}명\\n'
+            f'뇌졸중: {positive_count}명\\n'
+            f'뇌졸중 비율: {positive_rate:.1f}%", '
+            f'fillcolor="{color}"];\n'
+        )
+
+    feature_index = node.feature[node_id]
+    feature_name = feature_names[feature_index]
+    threshold = node.threshold[node_id]
+
+    label = (
+        f"{feature_name} <= {threshold:.2f}\\n"
+        f"데이터: {samples}명\\n"
+        f"정상: {negative_count}명\\n"
+        f"뇌졸중: {positive_count}명\\n"
+        f"뇌졸중 비율: {positive_rate:.1f}%"
+    )
 
     result = (
-        data.groupby(column, dropna=False)
-        .agg(
-            전체 인원=("stroke", "count"),
-            뇌졸중 인원=("stroke", lambda x: (x == 1).sum())
-        )
-        .reset_index()
+        f'{node_id} [label="{label}", fillcolor="#EEEEEE"];\n'
     )
 
-    result["뇌졸중 비율"] = (
-        result["뇌졸중 인원"]
-        / result["전체 인원"]
-        * 100
-    )
+    left_id = node.children_left[node_id]
+    right_id = node.children_right[node_id]
+
+    result += f'{node_id} -> {left_id} [label="예"];\n'
+    result += f'{node_id} -> {right_id} [label="아니오"];\n'
+
+    result += build_tree_graph(left_id)
+    result += build_tree_graph(right_id)
 
     return result
 
 
-# 고혈압
-hypertension_df = calculate_stroke_rate(
-    df.dropna(subset=["stroke"]),
-    "hypertension"
-)
+dot_graph = """
+digraph DecisionTree {
+    graph [
+        rankdir=TB,
+        bgcolor="transparent",
+        nodesep=0.35,
+        ranksep=0.55
+    ];
 
-hypertension_df["구분"] = hypertension_df["hypertension"].map({
-    0: "고혈압 없음",
-    1: "고혈압 있음"
-}).fillna("결측값")
+    node [
+        shape=box,
+        style="rounded,filled",
+        fontname="Malgun Gothic",
+        fontsize=10,
+        color="#777777"
+    ];
 
+    edge [
+        fontname="Malgun Gothic",
+        fontsize=9
+    ];
+"""
 
-# 심장병
-heart_df = calculate_stroke_rate(
-    df.dropna(subset=["stroke"]),
-    "heart_disease"
-)
+dot_graph += build_tree_graph()
+dot_graph += "}"
 
-heart_df["구분"] = heart_df["heart_disease"].map({
-    0: "심장병 없음",
-    1: "심장병 있음"
-}).fillna("결측값")
-
-
-col1, col2 = st.columns(2)
-
-with col1:
-
-    fig_hypertension = px.bar(
-        hypertension_df,
-        x="구분",
-        y="뇌졸중 비율",
-        text=hypertension_df["뇌졸중 비율"].apply(
-            lambda x: f"{x:.2f}%"
-        ),
-        title="고혈압 유무에 따른 뇌졸중 비율",
-        labels={
-            "구분": "고혈압 여부",
-            "뇌졸중 비율": "뇌졸중 비율 (%)"
-        },
-        color="구분",
-        color_discrete_sequence=[
-            "#4C78A8",
-            "#E45756"
-        ]
-    )
-
-    fig_hypertension.update_layout(
-        showlegend=False,
-        yaxis_title="뇌졸중 비율 (%)"
-    )
-
-    st.plotly_chart(
-        fig_hypertension,
-        use_container_width=True
-    )
-
-
-with col2:
-
-    fig_heart = px.bar(
-        heart_df,
-        x="구분",
-        y="뇌졸중 비율",
-        text=heart_df["뇌졸중 비율"].apply(
-            lambda x: f"{x:.2f}%"
-        ),
-        title="심장병 유무에 따른 뇌졸중 비율",
-        labels={
-            "구분": "심장병 여부",
-            "뇌졸중 비율": "뇌졸중 비율 (%)"
-        },
-        color="구분",
-        color_discrete_sequence=[
-            "#4C78A8",
-            "#E45756"
-        ]
-    )
-
-    fig_heart.update_layout(
-        showlegend=False,
-        yaxis_title="뇌졸중 비율 (%)"
-    )
-
-    st.plotly_chart(
-        fig_heart,
-        use_container_width=True
-    )
-
-
-st.divider()
-
-
-# ==========================================
-# 7. BMI 결측값과 뇌졸중 비율
-# ==========================================
-
-st.subheader("4. BMI 결측값 분석")
-
-st.markdown(
-    """
-    체질량지수(BMI)가 비어 있는 사람들을 따로 구분합니다.
-
-    BMI가 비어 있는 사람들의 뇌졸중 비율과
-    전체 데이터의 뇌졸중 비율을 비교합니다.
-    """
+st.graphviz_chart(
+    dot_graph,
+    use_container_width=True
 )
 
 
-# BMI가 비어 있는 사람
-missing_bmi_df = df[df["bmi"].isna()]
+# 트리 정보
+st.subheader("5. 결정 트리 분석")
 
-# 뇌졸중 데이터가 존재하는 행만 사용
-valid_stroke_df = df.dropna(subset=["stroke"])
-
-valid_missing_bmi = missing_bmi_df.dropna(
-    subset=["stroke"]
-)
-
-
-# 인원 계산
-missing_bmi_count = len(missing_bmi_df)
-
-missing_bmi_stroke_count = int(
-    (valid_missing_bmi["stroke"] == 1).sum()
-)
-
-total_stroke_count = int(
-    (valid_stroke_df["stroke"] == 1).sum()
-)
-
-
-# 비율 계산
-missing_bmi_rate = (
-    missing_bmi_stroke_count / len(valid_missing_bmi) * 100
-    if len(valid_missing_bmi) > 0 else 0
-)
-
-total_stroke_rate = (
-    total_stroke_count / len(valid_stroke_df) * 100
-    if len(valid_stroke_df) > 0 else 0
-)
-
-
-bmi_comparison = pd.DataFrame({
-    "구분": [
-        "BMI 결측자",
-        "전체 사람"
-    ],
-    "전체 인원": [
-        missing_bmi_count,
-        len(df)
-    ],
-    "뇌졸중 인원": [
-        missing_bmi_stroke_count,
-        total_stroke_count
-    ],
-    "뇌졸중 비율 (%)": [
-        round(missing_bmi_rate, 2),
-        round(total_stroke_rate, 2)
+used_features = sorted(set(
+    tree_model.tree_.feature[
+        tree_model.tree_.feature >= 0
     ]
-})
+))
 
+used_feature_names = [
+    feature_names[index]
+    for index in used_features
+]
 
-st.dataframe(
-    bmi_comparison,
-    use_container_width=True,
-    hide_index=True
+col1, col2, col3 = st.columns(3)
+
+col1.metric(
+    "전체 리프 노드",
+    f"{leaf_count}개"
 )
 
-
-st.info(
-    f"BMI가 비어 있는 사람은 총 {missing_bmi_count:,}명입니다."
+col2.metric(
+    "정상 예측 리프 노드",
+    f"{negative_leaf_count}개"
 )
 
-
-st.divider()
-
-
-# ==========================================
-# 8. 흡연 상태별 인원수
-# ==========================================
-
-st.subheader("5. 흡연 상태별 인원수")
-
-st.markdown(
-    """
-    흡연 상태의 각 범주에 해당하는 사람 수를 계산합니다.
-
-    결측값이 존재한다면 별도로 표시합니다.
-    """
+col3.metric(
+    "실제로 사용된 변수",
+    f"{len(used_feature_names)}개"
 )
 
-
-smoking_counts = (
-    df["smoking_status"]
-    .value_counts(dropna=False)
-    .rename_axis("흡연 상태")
-    .reset_index(name="사람 수")
-)
-
-smoking_counts["흡연 상태"] = (
-    smoking_counts["흡연 상태"]
-    .fillna("결측값")
-)
-
-
-st.dataframe(
-    smoking_counts,
-    use_container_width=True,
-    hide_index=True
+st.write(
+    "결정 트리에 사용된 변수:",
+    ", ".join(used_feature_names)
+    if used_feature_names else "없음"
 )
 
 
 st.divider()
 
-
-# ==========================================
-# 9. 페이지 하단
-# ==========================================
-
-st.caption(
-    "뇌졸중 예측 실습실 | 데이터 탐색 페이지"
-)
-
-st.caption(
-    "출처: https://raw.githubusercontent.com/greatsong/modudata/main/data/stroke.csv"
-)
-
-st.caption(
-    "본 분석은 데이터의 통계적 특성을 탐색하는 교육용 실습이며, "
-    "변수 사이의 관계가 인과관계를 의미하지는 않습니다."
+st.warning(
+    "이 모델은 교육용 데이터 분석 실습입니다. "
+    "실제 뇌졸중 진단이나 의료적 판단에 사용할 수 없습니다."
 )
